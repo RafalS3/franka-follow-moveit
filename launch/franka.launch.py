@@ -26,7 +26,7 @@ servo_yaml_path = os.path.join(
 )
 
 servo_params = load_yaml(servo_yaml_path)
-
+servo_params['drift_dimensions'] = [False, False, False, False, False, True]
 
 def launch_setup(context):
     actions = []

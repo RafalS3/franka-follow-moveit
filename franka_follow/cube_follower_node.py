@@ -7,6 +7,10 @@ from tf2_ros import Buffer, TransformListener
 from tf2_ros import TransformException
 from trajectory_msgs.msg import JointTrajectory
 from sensor_msgs.msg import JointState
+
+MAX_SPEED = 2.0
+MIN_DISTANCE = 0.05
+OBJ_Z_OFFSET = 0.18
 class CubeFollower(Node):
     def __init__(self):
         super().__init__(
@@ -25,7 +29,7 @@ class CubeFollower(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         
-        self.timer = self.create_timer(0.05, self.control_loop)
+        self.timer = self.create_timer(0.02, self.control_loop)
 
     def traj_cb(self, msg: JointTrajectory):
         if not msg.points:
@@ -40,35 +44,45 @@ class CubeFollower(Node):
 
     def control_loop(self):
         try:
-            trans = self.tf_buffer.lookup_transform(
-                'panda_hand',  # parent
-                'Cube',      # child
-                rclpy.time.Time() 
+            cube_tf = self.tf_buffer.lookup_transform(
+                'panda_link0', 'Cube', rclpy.time.Time()
+            )
+            hand_tf = self.tf_buffer.lookup_transform(
+                'panda_link0', 'panda_hand', rclpy.time.Time()
             )
         except TransformException as ex:
-            self.get_logger().info(
-                f'Waiting for tf to be published... {ex}', throttle_duration_sec=1.0)
             return
 
-        msg = TwistStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'panda_hand'
-
-        dx = trans.transform.translation.x
-        dy = trans.transform.translation.y
-        dz = trans.transform.translation.z
+        dx = cube_tf.transform.translation.x - hand_tf.transform.translation.x
+        dy = cube_tf.transform.translation.y - hand_tf.transform.translation.y
+        # small offset not to hit the cube
+        dz = (cube_tf.transform.translation.z + OBJ_Z_OFFSET) - hand_tf.transform.translation.z
 
         distance = math.sqrt(dx**2 + dy**2 + dz**2)
 
-        gain = 1.0  
-        if distance < 0.10:
+        msg = TwistStamped()
+        msg.header.stamp = cube_tf.header.stamp
+        msg.header.frame_id = 'panda_link0' 
+
+
+        if distance < MIN_DISTANCE:
             msg.twist.linear.x = 0.0
             msg.twist.linear.y = 0.0
             msg.twist.linear.z = 0.0
         else:
-            msg.twist.linear.x = dx * gain
-            msg.twist.linear.y = dy * gain
-            msg.twist.linear.z = dz * gain
+            dir_x = dx / distance
+            dir_y = dy / distance
+            dir_z = dz / distance
+
+            speed = min(distance * 2.5, MAX_SPEED)
+
+            msg.twist.linear.x = dir_x * speed
+            msg.twist.linear.y = dir_y * speed
+            msg.twist.linear.z = dir_z * speed
+
+        msg.twist.angular.x = 0.0
+        msg.twist.angular.y = 0.0
+        msg.twist.angular.z = 0.0
 
         self.publisher.publish(msg)
 
